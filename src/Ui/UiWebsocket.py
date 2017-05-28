@@ -35,7 +35,7 @@ class UiWebsocket(object):
         self.admin_commands = (
             "sitePause", "siteResume", "siteDelete", "siteList", "siteSetLimit", "siteClone",
             "channelJoinAllsite", "serverUpdate", "serverPortcheck", "serverShutdown", "certSet", "configSet",
-            "actionPermissionAdd", "actionPermissionRemove"
+            "permissionAdd", "permissionRemove"
         )
         self.async_commands = ("fileGet", "fileList", "dirList")
 
@@ -48,57 +48,30 @@ class UiWebsocket(object):
             file_server = sys.modules["main"].file_server
             if file_server.port_opened is None or file_server.tor_manager.start_onions is None:
                 self.site.page_requested = False  # Not ready yet, check next time
-            elif file_server.port_opened is True:
-                self.site.notifications.append([
-                    "done",
-                    _["Congratulation, your port <b>{0}</b> is opened.<br>You are full member of ZeroNet network!"].format(config.fileserver_port),
-                    10000
-                ])
-            elif config.tor == "always" and file_server.tor_manager.start_onions:
-                self.site.notifications.append([
-                    "done",
-                    _(u"""
-                    {_[Tor mode active, every connection using Onion route.]}<br>
-                    {_[Successfully started Tor onion hidden services.]}
-                    """),
-                    10000
-                ])
-            elif config.tor == "always" and file_server.tor_manager.start_onions is not False:
-                self.site.notifications.append([
-                    "error",
-                    _(u"""
-                    {_[Tor mode active, every connection using Onion route.]}<br>
-                    {_[Unable to start hidden services, please check your config.]}
-                    """),
-                    0
-                ])
-            elif file_server.port_opened is False and file_server.tor_manager.start_onions:
-                self.site.notifications.append([
-                    "done",
-                    _(u"""
-                    {_[Successfully started Tor onion hidden services.]}<br>
-                    {_[For faster connections open <b>{0}</b> port on your router.]}
-                    """).format(config.fileserver_port),
-                    10000
-                ])
             else:
-                self.site.notifications.append([
-                    "error",
-                    _(u"""
-                    {_[Your connection is restricted. Please, open <b>{0}</b> port on your router]}<br>
-                    {_[or configure Tor to become full member of ZeroNet network.]}
-                    """).format(config.fileserver_port),
-                    0
-                ])
+                try:
+                    self.addHomepageNotifications()
+                except Exception, err:
+                    self.log.error("Uncaught Exception: " + Debug.formatException(err))
 
         for notification in self.site.notifications:  # Send pending notification messages
+            # send via WebSocket
             self.cmd("notification", notification)
+            # just in case, log them to terminal
+            if notification[0] == "error":
+                self.log.error("\n*** %s\n" % self.dedent(notification[1]))
+
         self.site.notifications = []
+
         while True:
             try:
-                message = ws.receive()
+                if ws.closed:
+                    break
+                else:
+                    message = ws.receive()
             except Exception, err:
-                return "Bye."  # Close connection
+                self.log.error("WebSocket receive error: %s" % Debug.formatException(err))
+                break
 
             if message:
                 try:
@@ -106,8 +79,72 @@ class UiWebsocket(object):
                 except Exception, err:
                     if config.debug:  # Allow websocket errors to appear on /Debug
                         sys.modules["main"].DebugHook.handleError()
-                    self.log.error("WebSocket handleRequest error: %s" % Debug.formatException(err))
-                    self.cmd("error", "Internal error: %s" % Debug.formatException(err, "html"))
+                    self.log.error("WebSocket handleRequest error: %s \n %s" % (Debug.formatException(err), message))
+                    if not self.hasPlugin("Multiuser"):
+                        self.cmd("error", "Internal error: %s" % Debug.formatException(err, "html"))
+
+    def dedent(self, text):
+        return re.sub("[\\r\\n\\x20\\t]+", " ", text.strip().replace("<br>", " "))
+
+    def addHomepageNotifications(self):
+        if not(self.hasPlugin("Multiuser")) and not(self.hasPlugin("UiPassword")):
+            bind_ip = getattr(config, "ui_ip", "")
+            whitelist = getattr(config, "ui_restrict", [])
+            # binds to the Internet, no IP whitelist, no UiPassword, no Multiuser
+            if ("0.0.0.0" == bind_ip or "*" == bind_ip) and (not whitelist):
+                self.site.notifications.append([
+                    "error",
+                    _(u"You are not going to set up a public gateway. However, <b>your Web UI is<br>" + \
+                        "open to the whole Internet.</b> " + \
+                        "Please check your configuration.")
+                ])
+
+        file_server = sys.modules["main"].file_server
+        if file_server.port_opened is True:
+            self.site.notifications.append([
+                "done",
+                _["Congratulation, your port <b>{0}</b> is opened.<br>You are full member of ZeroNet network!"].format(config.fileserver_port),
+                10000
+            ])
+        elif config.tor == "always" and file_server.tor_manager.start_onions:
+            self.site.notifications.append([
+                "done",
+                _(u"""
+                {_[Tor mode active, every connection using Onion route.]}<br>
+                {_[Successfully started Tor onion hidden services.]}
+                """),
+                10000
+            ])
+        elif config.tor == "always" and file_server.tor_manager.start_onions is not False:
+            self.site.notifications.append([
+                "error",
+                _(u"""
+                {_[Tor mode active, every connection using Onion route.]}<br>
+                {_[Unable to start hidden services, please check your config.]}
+                """),
+                0
+            ])
+        elif file_server.port_opened is False and file_server.tor_manager.start_onions:
+            self.site.notifications.append([
+                "done",
+                _(u"""
+                {_[Successfully started Tor onion hidden services.]}<br>
+                {_[For faster connections open <b>{0}</b> port on your router.]}
+                """).format(config.fileserver_port),
+                10000
+            ])
+        else:
+            self.site.notifications.append([
+                "error",
+                _(u"""
+                {_[Your connection is restricted. Please, open <b>{0}</b> port on your router]}<br>
+                {_[or configure Tor to become full member of ZeroNet network.]}
+                """).format(config.fileserver_port),
+                0
+            ])
+
+    def hasPlugin(self, name):
+        return name in PluginManager.plugin_manager.plugin_names
 
     # Has permission to run the command
     def hasCmdPermission(self, cmd):
@@ -516,10 +553,10 @@ class UiWebsocket(object):
                 ws.event("siteChanged", self.site, {"event": ["file_deleted", inner_path]})
 
     # Find data in json files
-    def actionFileQuery(self, to, dir_inner_path, query):
+    def actionFileQuery(self, to, dir_inner_path, query=None):
         # s = time.time()
         dir_path = self.site.storage.getPath(dir_inner_path)
-        rows = list(QueryJson.query(dir_path, query))
+        rows = list(QueryJson.query(dir_path, query or ""))
         # self.log.debug("FileQuery %s %s done in %s" % (dir_inner_path, query, time.time()-s))
         return self.response(to, rows)
 
@@ -757,16 +794,24 @@ class UiWebsocket(object):
         else:
             self.response(to, {"error": "Unknown site: %s" % address})
 
-    def actionSiteClone(self, to, address, root_inner_path=""):
+    def actionSiteClone(self, to, address, root_inner_path="", target_address=None):
         self.cmd("notification", ["info", _["Cloning site..."]])
         site = self.server.sites.get(address)
-        # Generate a new site from user's bip32 seed
-        new_address, new_address_index, new_site_data = self.user.getNewSiteData()
-        new_site = site.clone(new_address, new_site_data["privatekey"], address_index=new_address_index, root_inner_path=root_inner_path)
-        new_site.settings["own"] = True
-        new_site.saveSettings()
-        self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
-        gevent.spawn(new_site.announce)
+        if target_address:
+            target_site = self.server.sites.get(target_address)
+            privatekey = self.user.getSiteData(target_site.address).get("privatekey")
+            site.clone(target_address, privatekey, root_inner_path=root_inner_path)
+            self.cmd("notification", ["done", _["Site source code upgraded!"]])
+            site.publish()
+        else:
+            # Generate a new site from user's bip32 seed
+            new_address, new_address_index, new_site_data = self.user.getNewSiteData()
+            new_site = site.clone(new_address, new_site_data["privatekey"], address_index=new_address_index, root_inner_path=root_inner_path)
+            new_site.settings["own"] = True
+            new_site.saveSettings()
+            self.cmd("notification", ["done", _["Site cloned"] + "<script>window.top.location = '/%s'</script>" % new_address])
+            gevent.spawn(new_site.announce)
+
 
     def actionSiteSetLimit(self, to, size_limit):
         self.site.settings["size_limit"] = int(size_limit)

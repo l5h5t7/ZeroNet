@@ -9,8 +9,8 @@ import ConfigParser
 class Config(object):
 
     def __init__(self, argv):
-        self.version = "0.5.4"
-        self.rev = 2054
+        self.version = "0.5.5"
+        self.rev = 2091
         self.argv = argv
         self.action = None
         self.config_file = "zeronet.conf"
@@ -77,6 +77,12 @@ class Config(object):
         elif this_file.endswith("/core/src/Config.py"):
             # Running as exe or source is at Application Support directory, put var files to outside of core dir
             start_dir = this_file.replace("/core/src/Config.py", "").decode(sys.getfilesystemencoding())
+            config_file = start_dir + "/zeronet.conf"
+            data_dir = start_dir + "/data"
+            log_dir = start_dir + "/log"
+        elif this_file.endswith("usr/share/zeronet/src/Config.py"):
+            # Running from non-writeable location, e.g., AppImage
+            start_dir = os.path.expanduser("~/ZeroNet").decode(sys.getfilesystemencoding())
             config_file = start_dir + "/zeronet.conf"
             data_dir = start_dir + "/data"
             log_dir = start_dir + "/log"
@@ -181,7 +187,8 @@ class Config(object):
                                  metavar='address')
         self.parser.add_argument('--updatesite', help='Source code update site', default='1UPDatEDxnvHDo7TXvq6AEBARfNkyfxsp',
                                  metavar='address')
-        self.parser.add_argument('--size_limit', help='Default site size limit in MB', default=10, type=int, metavar='size')
+        self.parser.add_argument('--size_limit', help='Default site size limit in MB', default=10, type=int, metavar='limit')
+        self.parser.add_argument('--file_size_limit', help='Maximum per file size limit in MB', default=10, type=int, metavar='limit')
         self.parser.add_argument('--connected_limit', help='Max connected peer per site', default=8, type=int, metavar='connected_limit')
         self.parser.add_argument('--workers', help='Download workers per site', default=5, type=int, metavar='workers')
 
